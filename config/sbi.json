@@ -1,0 +1,18 @@
+{
+  "institution": "sbi_demo",
+  "product": "personal_loan",
+  "label": "Representative demo configuration",
+  "requiredFields": ["loan_amount", "tenure_months", "monthly_income", "employment_type"],
+  "requiredDocuments": ["salary_slip"],
+  "fieldMappings": {
+    "monthly_income": "income.net_monthly"
+  },
+  "documentFieldMappings": {
+    "income.net_monthly": "net_monthly_income"
+  },
+  "terminology": {
+    "monthly_income": "Monthly take-home income",
+    "employment_type": "Employment type"
+  },
+  "validationRules": []
+}

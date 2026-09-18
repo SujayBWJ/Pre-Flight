@@ -1,0 +1,18 @@
+{
+  "institution": "hdfc_demo",
+  "product": "personal_loan",
+  "label": "Representative demo configuration",
+  "requiredFields": ["loan_amount", "tenure_months", "monthly_income", "employment_type"],
+  "requiredDocuments": ["salary_slip", "bank_statement"],
+  "fieldMappings": {
+    "monthly_income": "income.gross_monthly"
+  },
+  "documentFieldMappings": {
+    "income.gross_monthly": "gross_monthly_income"
+  },
+  "terminology": {
+    "monthly_income": "Monthly income",
+    "employment_type": "Employment type"
+  },
+  "validationRules": []
+}
