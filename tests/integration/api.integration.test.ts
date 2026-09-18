@@ -32,6 +32,44 @@ describe("Pre-Flight API flow", () => {
     ]));
   });
 
+  it("normalizes monetary shorthand and preserves explicit employment in the canonical profile", async () => {
+    const response = await request(app)
+      .post("/api/intent")
+      .send({ message: "I need a personal loan of ₹3 lakh for 24 months. I am salaried, I earn 50K per month, and I have an EMI of ₹7,000." });
+
+    expect(response.status).toBe(200);
+    expect(response.body.profile).toEqual({
+      product: "personal_loan",
+      loan_amount: 300000,
+      tenure_months: 24,
+      income: { gross_monthly: 50000, net_monthly: null },
+      employment: { type: "salaried", employer: null },
+      existing_emi: 7000,
+      purpose: null
+    });
+  });
+
+  it.each([
+    ["50K", 50000],
+    ["50k", 50000],
+    ["₹50K", 50000],
+    ["₹50,000", 50000],
+    ["50,000", 50000],
+    ["50 thousand", 50000],
+    ["50 thousand rupees", 50000],
+    ["1.5 lakh", 150000],
+    ["1.5L", 150000],
+    ["2 lakh", 200000],
+    ["3L", 300000]
+  ])("normalizes income expression %s", async (expression, expected) => {
+    const response = await request(app)
+      .post("/api/intent")
+      .send({ message: `I earn ${expression} per month.` });
+
+    expect(response.status).toBe(200);
+    expect(response.body.profile.income.gross_monthly).toBe(expected);
+  });
+
   it("extracts a synthetic salary slip and detects a configured net-income conflict", async () => {
     const document = await request(app)
       .post("/api/documents/extract")

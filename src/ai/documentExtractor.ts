@@ -1,12 +1,13 @@
-import { extractedDocumentSchema, type ExtractedDocument } from "../domain/schemas.js";
+import { getGeminiApiKey } from "../config/env.js";
+import { extractedDocumentSchema, type ExtractedDocument, type SupportingDocumentType } from "../domain/schemas.js";
 import { z } from "zod";
 
 export interface DocumentExtractor {
-  extract(input: { filename: string; documentType: "salary_slip" | "bank_statement"; bytes: Buffer; mimeType: string }): Promise<{ document: ExtractedDocument; source: "live_ai" | "deterministic_demo_fallback" }>;
+  extract(input: { filename: string; documentType: SupportingDocumentType; bytes: Buffer; mimeType: string }): Promise<{ document: ExtractedDocument; source: "live_ai" | "deterministic_demo_fallback" }>;
 }
 
 export class SyntheticDocumentExtractor implements DocumentExtractor {
-  async extract(input: { filename: string; documentType: "salary_slip" | "bank_statement"; bytes: Buffer; mimeType: string }) {
+  async extract(input: { filename: string; documentType: SupportingDocumentType; bytes: Buffer; mimeType: string }) {
     void input.bytes;
     const document = extractedDocumentSchema.parse({
       document_id: `doc_${Date.now()}`,
@@ -34,8 +35,8 @@ const geminiDocumentOutputSchema = z.object({
 export class GeminiDocumentExtractor implements DocumentExtractor {
   constructor(private readonly apiKey: string) {}
 
-  async extract(input: { filename: string; documentType: "salary_slip" | "bank_statement"; bytes: Buffer; mimeType: string }) {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`, {
+  async extract(input: { filename: string; documentType: SupportingDocumentType; bytes: Buffer; mimeType: string }) {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${this.apiKey}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -62,7 +63,6 @@ export class GeminiDocumentExtractor implements DocumentExtractor {
 }
 
 export function createDocumentExtractor(): DocumentExtractor {
-  return process.env.GEMINI_API_KEY
-    ? new GeminiDocumentExtractor(process.env.GEMINI_API_KEY)
-    : new SyntheticDocumentExtractor();
+  const apiKey = getGeminiApiKey();
+  return apiKey ? new GeminiDocumentExtractor(apiKey) : new SyntheticDocumentExtractor();
 }

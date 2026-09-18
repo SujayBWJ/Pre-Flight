@@ -129,4 +129,247 @@ describe("deterministic preparation verification", () => {
 
     expect(result.checks[0]).toMatchObject({ id: "income_requirement", status: "VERIFIED" });
   });
+
+  it("keeps a salary revision discrepancy in NEEDS_CLARIFICATION until the revision evidence is provided", () => {
+    const revisedProfile = canonicalProfileSchema.parse({
+      ...profile,
+      income: { gross_monthly: 40000, net_monthly: null }
+    });
+    const salarySlipWithRevision = extractedDocumentSchema.parse({
+      document_id: "doc_salary_60000",
+      document_type: "salary_slip",
+      filename: "salary_slip_august.pdf",
+      fields: { gross_monthly_income: 60000, net_monthly_income: 56000, employer: "ABC Technologies" },
+      sources: [
+        { field: "gross_monthly_income", value: 60000, source_label: "Gross Salary", page: 1 },
+        { field: "net_monthly_income", value: 56000, source_label: "Net Salary", page: 1 }
+      ]
+    });
+    const result = evaluatePreparation(revisedProfile, getInstitutionConfig("hdfc_demo"), [salarySlipWithRevision]);
+
+    expect(result.overall_state).toBe("NEEDS_CLARIFICATION");
+    expect(result.issues[0]).toMatchObject({ canonical_field: "income.gross_monthly" });
+  });
+
+  it("reconciles salary revision evidence when the previous salary, revised salary, and current slip match", () => {
+    const updatedProfile = canonicalProfileSchema.parse({
+      ...profile,
+      income: { gross_monthly: 40000, net_monthly: null }
+    });
+    const revisionLetter = extractedDocumentSchema.parse({
+      document_id: "doc_revision_001",
+      document_type: "salary_revision_letter",
+      filename: "Revision_Letter_Aug_2026.pdf",
+      fields: {
+        gross_monthly_income: null,
+        net_monthly_income: null,
+        employer: "ABC Technologies",
+        previous_salary: 40000,
+        revised_salary: 60000,
+        effective_date: "2026-08-01"
+      },
+      sources: [
+        { field: "previous_salary", value: 40000, source_label: "Salary revision letter", page: 1 },
+        { field: "revised_salary", value: 60000, source_label: "Salary revision letter", page: 1 },
+        { field: "effective_date", value: 20260801, source_label: "Salary revision letter", page: 1 }
+      ]
+    });
+
+    const slip = extractedDocumentSchema.parse({
+      document_id: "doc_salary_60000",
+      document_type: "salary_slip",
+      filename: "salary_slip_august.pdf",
+      fields: { gross_monthly_income: 60000, net_monthly_income: 56000, employer: "ABC Technologies" },
+      sources: [
+        { field: "gross_monthly_income", value: 60000, source_label: "Gross Salary", page: 1 },
+        { field: "net_monthly_income", value: 56000, source_label: "Net Salary", page: 1 }
+      ]
+    });
+
+    const result = evaluatePreparation(updatedProfile, getInstitutionConfig("hdfc_demo"), [slip, revisionLetter]);
+
+    expect(result.overall_state).toBe("VERIFIED");
+    expect(result.reconciliation?.explanation_type).toBe("SALARY_REVISION");
+    expect(result.reconciliation?.explanation).toContain("revised gross salary of ₹60,000");
+  });
+
+  it("does not flag a gross-versus-net salary difference when net income and salary credit match", () => {
+    const declaredNetProfile = canonicalProfileSchema.parse({
+      ...profile,
+      income: { gross_monthly: 60000, net_monthly: 56000 }
+    });
+    const salarySlipNet = extractedDocumentSchema.parse({
+      document_id: "doc_net_001",
+      document_type: "salary_slip",
+      filename: "Salary_Slip_Net.pdf",
+      fields: { gross_monthly_income: 60000, net_monthly_income: 56000, employer: "XYZ Pvt Ltd" },
+      sources: [
+        { field: "gross_monthly_income", value: 60000, source_label: "Gross Salary", page: 1 },
+        { field: "net_monthly_income", value: 56000, source_label: "Net Salary", page: 1 }
+      ]
+    });
+    const bankStatement = extractedDocumentSchema.parse({
+      document_id: "doc_bank_001",
+      document_type: "bank_statement",
+      filename: "bank_statement_august.pdf",
+      fields: { gross_monthly_income: null, net_monthly_income: 56000, employer: null },
+      sources: [
+        { field: "net_monthly_income", value: 56000, source_label: "Salary Credit", page: 1 }
+      ]
+    });
+
+    const result = evaluatePreparation(declaredNetProfile, getInstitutionConfig("sbi_demo"), [salarySlipNet, bankStatement]);
+
+    expect(result.overall_state).toBe("VERIFIED");
+    expect(result.issues).toHaveLength(0);
+    expect(result.reconciliation?.explanation_type).toBe("GROSS_NET_DIFFERENCE");
+  });
+
+  it("requests clarification for a recent job change until employment evidence matches the current employer", () => {
+    const profileWithNewJob = canonicalProfileSchema.parse({
+      ...profile,
+      employment: { type: "salaried", employer: "ABC Technologies" },
+      income: { gross_monthly: 40000, net_monthly: null }
+    });
+    const latestSlip = extractedDocumentSchema.parse({
+      document_id: "doc_job_001",
+      document_type: "salary_slip",
+      filename: "salary_slip_orbit.pdf",
+      fields: { gross_monthly_income: 60000, net_monthly_income: 54000, employer: "Orbit Technologies Pvt. Ltd." },
+      sources: [
+        { field: "gross_monthly_income", value: 60000, source_label: "Gross Salary", page: 1 },
+        { field: "employer", value: 0, source_label: "Employer", page: 1 }
+      ]
+    });
+
+    const result = evaluatePreparation(profileWithNewJob, getInstitutionConfig("hdfc_demo"), [latestSlip]);
+
+    expect(result.overall_state).toBe("NEEDS_CLARIFICATION");
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ canonical_field: "employment.employer" })
+    ]));
+  });
+
+  it("resolves a recent job change with matching previous and current employers plus compensation", () => {
+    const profileWithOldEmployer = canonicalProfileSchema.parse({
+      ...profile,
+      employment: { type: "salaried", employer: "ABC Technologies" },
+      income: { gross_monthly: 40000, net_monthly: null }
+    });
+    const offerLetter = extractedDocumentSchema.parse({
+      document_id: "doc_offer_001",
+      document_type: "offer_letter",
+      filename: "offer_letter_orbit.pdf",
+      fields: {
+        gross_monthly_income: null,
+        net_monthly_income: null,
+        employer: "Orbit Technologies Pvt. Ltd.",
+        previous_employer: "ABC Technologies",
+        new_employer: "Orbit Technologies Pvt. Ltd.",
+        joining_date: "2026-06-15",
+        compensation: 60000
+      },
+      sources: [
+        { field: "previous_employer", value: 0, source_label: "Offer letter", page: 1 },
+        { field: "new_employer", value: 0, source_label: "Offer letter", page: 1 },
+        { field: "compensation", value: 60000, source_label: "Offer letter", page: 1 }
+      ]
+    });
+    const latestSlip = extractedDocumentSchema.parse({
+      document_id: "doc_job_002",
+      document_type: "salary_slip",
+      filename: "salary_slip_orbit.pdf",
+      fields: { gross_monthly_income: 60000, net_monthly_income: 54000, employer: "Orbit Technologies Pvt. Ltd." },
+      sources: [
+        { field: "gross_monthly_income", value: 60000, source_label: "Gross Salary", page: 1 },
+        { field: "employer", value: 0, source_label: "Employer", page: 1 }
+      ]
+    });
+
+    const result = evaluatePreparation(profileWithOldEmployer, getInstitutionConfig("hdfc_demo"), [latestSlip, offerLetter]);
+
+    expect(result.overall_state).toBe("VERIFIED");
+    expect(result.reconciliation?.explanation_type).toBe("RECENT_JOB_CHANGE");
+    expect(result.reconciliation?.explanation).toContain("Orbit Technologies");
+  });
+
+  it("keeps unresolved salary revision evidence in NEEDS_CLARIFICATION when the document does not match the declared prior salary", () => {
+    const revisedProfile = canonicalProfileSchema.parse({
+      ...profile,
+      income: { gross_monthly: 40000, net_monthly: null }
+    });
+    const wrongRevisionLetter = extractedDocumentSchema.parse({
+      document_id: "doc_revision_wrong",
+      document_type: "salary_revision_letter",
+      filename: "wrong_revision_letter.pdf",
+      fields: {
+        gross_monthly_income: null,
+        net_monthly_income: null,
+        employer: "ABC Technologies",
+        previous_salary: 45000,
+        revised_salary: 60000,
+        effective_date: "2026-08-01"
+      },
+      sources: [
+        { field: "previous_salary", value: 45000, source_label: "Salary revision letter", page: 1 },
+        { field: "revised_salary", value: 60000, source_label: "Salary revision letter", page: 1 },
+        { field: "effective_date", value: 20260801, source_label: "Salary revision letter", page: 1 }
+      ]
+    });
+    const slip = extractedDocumentSchema.parse({
+      document_id: "doc_salary_60000",
+      document_type: "salary_slip",
+      filename: "salary_slip_august.pdf",
+      fields: { gross_monthly_income: 60000, net_monthly_income: 56000, employer: "ABC Technologies" },
+      sources: [
+        { field: "gross_monthly_income", value: 60000, source_label: "Gross Salary", page: 1 },
+        { field: "net_monthly_income", value: 56000, source_label: "Net Salary", page: 1 }
+      ]
+    });
+
+    const result = evaluatePreparation(revisedProfile, getInstitutionConfig("hdfc_demo"), [slip, wrongRevisionLetter]);
+
+    expect(result.overall_state).toBe("NEEDS_CLARIFICATION");
+    expect(result.reconciliation?.unresolved_items.join(" ")).toContain("previous salary");
+  });
+
+  it("preserves provenance throughout reconciliation when evidence validates the difference", () => {
+    const updatedProfile = canonicalProfileSchema.parse({
+      ...profile,
+      income: { gross_monthly: 40000, net_monthly: null }
+    });
+    const revisionLetter = extractedDocumentSchema.parse({
+      document_id: "doc_revision_002",
+      document_type: "salary_revision_letter",
+      filename: "Revision_Letter_Aug_2026.pdf",
+      fields: {
+        gross_monthly_income: null,
+        net_monthly_income: null,
+        employer: "ABC Technologies",
+        previous_salary: 40000,
+        revised_salary: 60000,
+        effective_date: "2026-08-01"
+      },
+      sources: [
+        { field: "previous_salary", value: 40000, source_label: "Salary revision letter", page: 1 },
+        { field: "revised_salary", value: 60000, source_label: "Salary revision letter", page: 1 },
+        { field: "effective_date", value: 20260801, source_label: "Salary revision letter", page: 1 }
+      ]
+    });
+    const slip = extractedDocumentSchema.parse({
+      document_id: "doc_salary_60000",
+      document_type: "salary_slip",
+      filename: "salary_slip_august.pdf",
+      fields: { gross_monthly_income: 60000, net_monthly_income: 56000, employer: "ABC Technologies" },
+      sources: [
+        { field: "gross_monthly_income", value: 60000, source_label: "Gross Salary", page: 1 },
+        { field: "net_monthly_income", value: 56000, source_label: "Net Salary", page: 1 }
+      ]
+    });
+
+    const result = evaluatePreparation(updatedProfile, getInstitutionConfig("hdfc_demo"), [slip, revisionLetter]);
+
+    expect(result.reconciliation?.provenance.some((entry) => entry.reference === "Revision_Letter_Aug_2026.pdf")).toBe(true);
+    expect(result.reconciliation?.provenance.some((entry) => entry.reference === "salary_slip_august.pdf")).toBe(true);
+  });
 });

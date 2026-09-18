@@ -42,7 +42,7 @@ router.post("/documents/extract", upload.single("file"), async (request, respons
     const documentType = request.body?.document_type;
     const parsedType = extractedDocumentSchema.shape.document_type.safeParse(documentType);
     if (!request.file) return response.status(400).json(validationError("file is required."));
-    if (!parsedType.success) return response.status(400).json(validationError("document_type must be salary_slip or bank_statement."));
+    if (!parsedType.success) return response.status(400).json(validationError("document_type is invalid."));
     if (!["application/pdf", "image/jpeg", "image/png"].includes(request.file.mimetype)) {
       return response.status(415).json({ success: false, error: { code: "UNSUPPORTED_DOCUMENT", message: "Only PDF, JPG, and PNG files are supported." } });
     }
