@@ -2,9 +2,9 @@
 
 ## 1. Architecture Overview
 
-Pre-Flight is a preparation-state linter for a personal-loan application. The backend will normalize user intent into an institution-independent canonical profile, resolve representative institution requirements, compare structured evidence with deterministic code, and expose explanations and next actions. It will never make approval, rejection, eligibility, credit-scoring, or lender-recommendation decisions.
+Pre-Flight is a preparation-state linter for a personal-loan application. The backend normalizes user intent into an institution-independent canonical profile, resolves representative institution requirements, compares structured evidence with deterministic code, and exposes explanations and next actions. It never makes approval, rejection, eligibility, credit-scoring, or lender-recommendation decisions.
 
-The repository is backend-only at this stage. The MVP uses temporary in-memory state and synthetic documents; it does not require a persistent database or document vault.
+The repository is backend-only at this stage. The MVP uses request-scoped structured data and synthetic documents; it does not require a persistent database, session store, or document vault.
 
 ## 2. Architecture Diagram
 
@@ -28,7 +28,7 @@ flowchart TD
 
 - `src/app.ts`: Express application factory, JSON parsing, health check, and stable 404/error responses.
 - `src/server.ts`: Environment loading and process startup only.
-- `src/domain`: Canonical profile, semantic field, status, document, issue, and application schemas.
+- `src/domain`: Canonical profile, semantic field, status, document, issue, and verification-result schemas.
 - `src/institutions`: Validated representative configurations and canonical-to-institution mappings.
 - `src/verification`: Completeness, semantic comparison, discrepancy calculation, status transitions, and next actions.
 - `src/ai`: Small interfaces plus Gemini and deterministic demo implementations. AI output is never trusted before schema validation.
@@ -50,7 +50,7 @@ flowchart TD
 
 ## 5. Data Flow
 
-`POST /api/intent` interprets a message, validates the result, and returns a canonical profile plus `extraction_source`. Journey evaluation resolves a selected representative institution configuration and runs deterministic checks. Optional document extraction validates only relevant structured fields and provenance before verification consumes them; uploaded bytes are ignored by the synthetic fallback and cannot act as instructions. Explanations accept an already-detected issue, and re-verification runs the same deterministic engine with updated profile/evidence.
+`POST /api/intent` interprets a message, validates the result, and returns a canonical profile plus `extraction_source`. Journey evaluation resolves a selected representative institution configuration and runs deterministic checks. Optional document extraction validates only relevant structured fields and provenance before verification consumes them; uploaded bytes are ignored by the synthetic fallback and cannot act as instructions. Missing optional evidence is returned in `document_requirements` with `verification_optional: true`, so it does not make the preparation state `MISSING`. Explanations accept an already-detected issue, and re-verification runs the same deterministic engine with updated profile/evidence.
 
 ## 6. Canonical Data Model
 
@@ -66,7 +66,7 @@ HDFC, SBI, and IDFC FIRST are representative demo configurations, not live integ
 
 ## 9. Verification Engine
 
-The engine separately checks required fields/documents and compares compatible declared/evidence values. User input starts as `PROVIDED`; absence of evidence is not a discrepancy. Matching evidence becomes `VERIFIED`, while a genuine semantic conflict becomes `NEEDS_CLARIFICATION` with a deterministic difference and provenance.
+The engine checks configured required fields and compares every configured canonical mapping for which document evidence exists. User input starts as `PROVIDED`; absence of optional evidence is not a discrepancy or blocking `MISSING` state. Matching evidence becomes `VERIFIED`, while a genuine numeric semantic conflict becomes `NEEDS_CLARIFICATION` with a deterministic difference and provenance. All supplied documents are considered; a later matching document can resolve an earlier conflicting document. The current representative configurations have no executable validation rules, so `validationRules: []` is intentionally descriptive of that absence rather than an inactive rule engine.
 
 ## 10. Status Model
 
@@ -93,7 +93,7 @@ Uploaded documents are untrusted data. Document text cannot alter status, mappin
 
 ## 15. State Management
 
-No persistent database is used. Current-session application state may be held in temporary server memory. This keeps the hackathon implementation small while making the production boundary explicit.
+No persistent database or session store is used. The API is stateless: the caller sends the current canonical profile, institution configuration, and structured evidence to each evaluation or re-verification request. This keeps the hackathon implementation small while making persistence and retention an explicit future boundary.
 
 ## 16. API Contracts
 
@@ -101,6 +101,7 @@ No persistent database is used. Current-session application state may be held in
 - `POST /api/intent`: message to validated canonical profile, with extraction source metadata. Uses Gemini when configured and deterministic demo fallback otherwise.
 - `POST /api/documents/extract`: synthetic PDF/JPG/PNG plus document type to validated structured fields and provenance.
 - `POST /api/journey/evaluate`: profile, institution configuration, and documents to checks, preparation state, issues, provenance, and next actions.
+- `POST /api/journey/evaluate`: profile, institution configuration, and documents to checks, preparation state, issues, provenance, optional `document_requirements`, and next actions. Document requirements are non-blocking optional verification opportunities in this MVP.
 - `POST /api/explanations`: structured issue to plain-language explanation; it cannot create or change an issue.
 - `POST /api/application/reverify`: updated profile/evidence to a fresh deterministic evaluation.
 
@@ -108,9 +109,17 @@ All errors use `{ success: false, error: { code, message } }` and do not expose 
 
 ## 17. Testing Strategy
 
-Vitest will cover schemas, institution resolution, each verification rule, fallback behavior, prompt-injection resistance, and API integration flows. The first foundation test covers health and stable unknown-route errors.
+Vitest covers schemas, institution resolution, no-document preparation, matching and conflicting gross/net evidence, deterministic 10,000 discrepancy calculation, correction and stale-issue removal, multiple documents, institution changes, generic mappings, fallback behavior, malformed Gemini output, prompt-injection resistance, invalid JSON, unsupported uploads, and API integration flows. `npm test`, `npm run typecheck`, and `npm run build` are the required validation commands.
 
-## 18. Architectural Decisions / ADR-style Log
+## 18. Known MVP Limitations
+
+- The demo extractor returns fixed synthetic salary-slip values; it does not parse arbitrary real documents.
+- Gemini is integrated through direct HTTP adapters, but production provider governance, retries, quotas, and data-handling assessment are outside the hackathon scope.
+- No session state or original document is retained by the backend between requests.
+- Numeric field discrepancies are supported; full cross-document reconciliation and arbitrary institution rule execution remain future work.
+- There is no frontend, authentication, account history, or production-grade financial-data security layer.
+
+## 19. Architectural Decisions / ADR-style Log
 
 ### Decision: Express with TypeScript
 
@@ -167,3 +176,67 @@ Why this choice: Deterministic rules are testable, explainable, and prevent prob
 Trade-offs: Institution rules must be modeled explicitly in configuration.
 
 Consequences: The same engine can support multiple representative institutions without duplicating verification logic.
+
+### Decision: Optional document verification is non-blocking
+
+Context: The PRD requires value before data and a usable no-document path.
+
+Decision: Representative document requirements are returned as optional verification opportunities; missing evidence does not create a discrepancy or block preparation.
+
+Alternatives considered: Treat every configured document as a blocking required check.
+
+Why this choice: A user can see what may help verify their information and continue without uploading sensitive data.
+
+Trade-offs: The backend must distinguish missing profile information from absent evidence metadata.
+
+Consequences: `document_requirements` exposes `provided` and `verification_optional` separately from core preparation statuses.
+
+How to explain this to a judge: “The user gets useful preparation value before sharing a document; uploading evidence is an explicit choice, not a gate.”
+
+### Decision: Generic configured field comparisons
+
+Context: Institution mappings must not be hardcoded around one field name.
+
+Decision: The verifier resolves dotted canonical paths from configuration and compares each mapped field against its configured document field.
+
+Alternatives considered: Separate verifier branches for income, employment, and each bank.
+
+Why this choice: It preserves semantic mappings and lets the same deterministic engine operate across representative configurations.
+
+Trade-offs: Configuration must use valid canonical/document field paths, and the MVP discrepancy model remains numeric.
+
+Consequences: A later matching document can resolve an earlier conflict, and no gross/net cross-comparison occurs.
+
+How to explain this to a judge: “We normalize the customer once, then configuration selects the exact semantic field each institution wants checked.”
+
+### Decision: Synthetic documents only
+
+Context: The hackathon requires data minimization and transient processing.
+
+Decision: The demo fallback uses synthetic salary-slip and bank-statement structures and retains only validated structured facts for the current request.
+
+Alternatives considered: Persistent document storage or arbitrary real financial-document parsing.
+
+Why this choice: It keeps the demo safe, deterministic, and within the eight-hour MVP boundary.
+
+Trade-offs: The fallback is not evidence of production document-processing capability.
+
+Consequences: Production use would need secure processing, retention/deletion, access control, and provider data-handling review.
+
+How to explain this to a judge: “The demo proves the architecture with synthetic data without pretending this prototype is a production financial document vault.”
+
+### Decision: No executable validation-rule DSL in P0
+
+Context: Configuration supports `validationRules`, but the representative demo files contain no rules required by the acceptance scenarios.
+
+Decision: Keep the field in the validated configuration contract, execute no rules while every representative list is empty, and document that state explicitly.
+
+Alternatives considered: Inventing a rule language or silently treating strings as executable business logic.
+
+Why this choice: It avoids false claims and unnecessary infrastructure while preserving a clear extension point.
+
+Trade-offs: Rich institution-specific validation is deferred.
+
+Consequences: Current P0 correctness comes from required fields, mappings, semantic comparisons, and status transitions only.
+
+How to explain this to a judge: “We only execute rules we actually need and can test; the demo configuration does not pretend descriptive strings are business logic.”

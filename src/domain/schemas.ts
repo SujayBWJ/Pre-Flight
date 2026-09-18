@@ -70,8 +70,16 @@ export const verificationInputSchema = z.object({
   documents: z.array(extractedDocumentSchema)
 });
 
+export const documentRequirementSchema = z.object({
+  document_type: z.enum(["salary_slip", "bank_statement"]),
+  label: z.string(),
+  provided: z.boolean(),
+  verification_optional: z.literal(true),
+  detail: z.string()
+});
+
 export const issueSchema = z.object({
-  type: z.literal("income_mismatch"),
+  type: z.enum(["income_mismatch", "field_mismatch"]),
   canonical_field: z.string(),
   declared_value: z.number(),
   documented_value: z.number(),
@@ -94,6 +102,7 @@ export const verificationResultSchema = z.object({
   })),
   overall_state: preparationStatusSchema,
   issues: z.array(issueSchema),
+  document_requirements: z.array(documentRequirementSchema),
   next_actions: z.array(z.string()),
   provenance: z.array(provenanceSchema)
 });

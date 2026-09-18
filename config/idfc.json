@@ -5,7 +5,8 @@
   "requiredFields": ["loan_amount", "tenure_months", "monthly_income", "employment_type"],
   "requiredDocuments": ["salary_slip", "bank_statement"],
   "fieldMappings": {
-    "monthly_income": "income.gross_monthly"
+    "monthly_income": "income.gross_monthly",
+    "employment_type": "employment.type"
   },
   "documentFieldMappings": {
     "income.gross_monthly": "gross_monthly_income"
