@@ -38,6 +38,7 @@ function App() {
   const [selectedExplanation, setSelectedExplanation] = useState<"salary_revision" | "gross_net_difference" | "recent_job_change" | null>(null);
   const [askOpen, setAskOpen] = useState(false);
   const [reconciliationNotice, setReconciliationNotice] = useState(false);
+  const [activeReconciliationContext, setActiveReconciliationContext] = useState<ReconciliationContext | undefined>();
 
   async function startPreFlight() {
     if (!message.trim()) return;
@@ -54,7 +55,7 @@ function App() {
     if (!profile) return;
     setLoading("evaluation"); setError("");
     try {
-      const evaluated = await evaluate(profile, nextInstitution, documents);
+      const evaluated = await evaluate(profile, nextInstitution, documents, activeReconciliationContext);
       setInstitution(nextInstitution); setResult(evaluated); setIssue(evaluated.issues[0] ?? null);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "We could not switch institutions."); }
     finally { setLoading(null); }
@@ -64,7 +65,7 @@ function App() {
     if (!profile || !institution) return;
     setLoading("evaluation"); setError("");
     try {
-      const evaluated = await evaluate(profile, institution, documents);
+      const evaluated = await evaluate(profile, institution, documents, activeReconciliationContext);
       setResult(evaluated); setScreen("preparation");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "We could not open your preparation view."); }
     finally { setLoading(null); }
@@ -78,6 +79,7 @@ function App() {
       const nextDocuments = [...documents, extracted.document];
       const evaluated = await evaluate(profile, institution, nextDocuments, reconciliationContext);
       setDocuments(nextDocuments); setResult(evaluated);
+      if (reconciliationContext) setActiveReconciliationContext(reconciliationContext);
       const nextIssue = evaluated.issues[0] ?? null; setIssue(nextIssue);
       let finalResult: VerificationResult;
       if (nextIssue) {
@@ -104,7 +106,7 @@ function App() {
     setLoading("reverify"); setError("");
     try {
       const nextProfile = { ...profile, income: { ...profile.income, gross_monthly: Number(correction) } };
-      const verified = await reverify(nextProfile, institution, documents);
+      const verified = await reverify(nextProfile, institution, documents, activeReconciliationContext);
       setProfile(nextProfile); setResult(verified); setIssue(verified.issues[0] ?? null); setExplanation("");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "We could not re-verify the corrected information."); }
     finally { setLoading(null); }
@@ -115,7 +117,7 @@ function App() {
     setLoading("evaluation"); setError("");
     try {
       const nextProfile = { ...profile, employment: { ...profile.employment, type } };
-      const evaluated = await evaluate(nextProfile, institution, documents);
+      const evaluated = await evaluate(nextProfile, institution, documents, activeReconciliationContext);
       setProfile(nextProfile); setResult(evaluated);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "We could not update your employment type."); }
     finally { setLoading(null); }
@@ -131,7 +133,7 @@ function App() {
         income: patch.income ? { ...profile.income, ...patch.income } : profile.income,
         employment: patch.employment ? { ...profile.employment, ...patch.employment } : profile.employment,
       };
-      const evaluated = await evaluate(nextProfile, institution, documents);
+      const evaluated = await evaluate(nextProfile, institution, documents, activeReconciliationContext);
       setProfile(nextProfile); setResult(evaluated); setIssue(evaluated.issues[0] ?? null);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "We could not update your information."); }
     finally { setLoading(null); }
@@ -251,7 +253,7 @@ function DashboardInformationEditor({ profile, onSave, loading }: { profile: Can
 function UpdateStatusBanner({ loading, result }: { loading: string | null; result: VerificationResult }) {
   const incomeCheck = result.checks.find((check) => check.id === "monthly_income");
   const updating = loading === "evaluation" || loading === "reverify";
-  const verified = !updating && incomeCheck?.status === "VERIFIED";
+  const verified = !updating && result.overall_state === "VERIFIED" && result.issues.length === 0 && !result.checks.some((check) => check.status === "MISSING") && incomeCheck?.status === "VERIFIED";
   if (!updating && !verified) return null;
   return <div className={`update-status-banner ${verified ? "verified" : "updating"}`} aria-live="polite">{verified ? <CheckCircle2 size={18} /> : <LoaderCircle className="spin" size={18} />}<div><strong>{verified ? "Information updated and verified" : "Updating your application information..."}</strong><span>{verified ? "The updated value matches the supporting evidence." : "Checking the updated information against your documents."}</span></div></div>;
 }

@@ -41,6 +41,8 @@ describe("deterministic preparation verification", () => {
     const result = evaluatePreparation(profile, getInstitutionConfig("hdfc_demo"), [salarySlip]);
 
     expect(result.checks.find((check) => check.id === "monthly_income")?.status).toBe("VERIFIED");
+    expect(result.checks.find((check) => check.id === "employment_type")?.status).toBe("PROVIDED");
+    expect(result.overall_state).toBe("PROVIDED");
     expect(result.issues).toHaveLength(0);
     expect(result.provenance[0]?.source_label).toBe("Gross Salary");
   });

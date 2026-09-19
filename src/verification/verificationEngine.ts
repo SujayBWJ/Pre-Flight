@@ -462,7 +462,9 @@ export function evaluatePreparation(
       };
     }
     if (reconciliation?.status === "VERIFIED") {
-      if (fieldCheckIndex >= 0 && checks[fieldCheckIndex]) {
+      const reconciledField = reconciliation.user_declaration.field;
+      const isReconciledField = mappedField === reconciledField;
+      if (isReconciledField && fieldCheckIndex >= 0 && checks[fieldCheckIndex]) {
         checks[fieldCheckIndex] = {
           ...checks[fieldCheckIndex],
           status: "VERIFIED",
@@ -526,12 +528,12 @@ export function evaluatePreparation(
     }
   }
 
-  const overall_state = reconciliation?.status === "VERIFIED"
-    ? "VERIFIED"
-    : issues.length > 0
+  const overall_state = issues.length > 0
       ? "NEEDS_CLARIFICATION"
       : checks.some((check) => check.status === "MISSING")
         ? "MISSING"
+        : reconciliation?.status === "VERIFIED"
+          ? "VERIFIED"
         : checks.some((check) => check.status === "PROVIDED")
           ? "PROVIDED"
           : "VERIFIED";
