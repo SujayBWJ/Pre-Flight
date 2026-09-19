@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:frontend": "tsc -p frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
-    "dev": "tsx watch src/server.ts",
+    "dev": "concurrently --kill-others-on-fail \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "tsx watch src/server.ts",
     "dev:frontend": "vite --config frontend/vite.config.ts",
     "start": "node dist/src/server.js",
     "test": "vitest run",
@@ -32,6 +33,7 @@
     "@types/react-dom": "^18.3.1",
     "@types/supertest": "^7.2.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
     "supertest": "^7.1.0",
     "tailwindcss": "^4.1.12",
     "tsx": "^4.19.3",

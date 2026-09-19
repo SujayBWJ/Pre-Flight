@@ -15,6 +15,7 @@ type ReconciliationOutcome = {
   provenance: VerificationResult["provenance"];
   reconciliation?: Reconciliation;
 };
+type ReconciliationContext = { explanation_type: "SALARY_REVISION" | "GROSS_NET_DIFFERENCE" | "RECENT_JOB_CHANGE"; previous_salary_confirmed?: boolean };
 
 function getCanonicalValue(profile: CanonicalProfile, path: string): ComparableValue | undefined {
   const value = path.split(".").reduce<unknown>((current, segment) => {
@@ -128,7 +129,8 @@ function evaluateGrossVsNetReconciliation(
 
 function evaluateSalaryRevision(
   profile: CanonicalProfile,
-  documents: ExtractedDocument[]
+  documents: ExtractedDocument[],
+  reconciliationContext?: ReconciliationContext
 ): ReconciliationOutcome {
   const declaredIncome = profile.income.gross_monthly;
   if (declaredIncome === null || declaredIncome === undefined) {
@@ -137,6 +139,30 @@ function evaluateSalaryRevision(
 
   const salaryRevisionDocs = documents.filter((document) => document.document_type === "salary_revision_letter" || document.document_type === "hr_salary_certificate");
   const currentSlip = documents.find((document) => document.document_type === "salary_slip");
+  if (reconciliationContext?.explanation_type === "SALARY_REVISION" && reconciliationContext.previous_salary_confirmed && currentSlip) {
+    const currentSalary = currentSlip.fields.gross_monthly_income ?? null;
+    const currentSource = currentSlip.sources.find((entry) => entry.field === "gross_monthly_income") ?? currentSlip.sources[0];
+    if (currentSalary !== null && currentSalary !== declaredIncome) {
+      const provenance = [{ type: "document" as const, reference: currentSlip.filename, source_label: currentSource?.source_label ?? "Gross Salary", page: currentSource?.page }];
+      return {
+        status: "VERIFIED",
+        issues: [],
+        provenance,
+        reconciliation: {
+          reconciliation_id: `recon_${Date.now()}`,
+          explanation_type: "SALARY_REVISION",
+          user_declaration: { field: "income.gross_monthly", value: declaredIncome, source: "user_input" },
+          primary_evidence: { field: "gross_monthly_income", value: currentSalary, source_label: currentSource?.source_label ?? "Current salary slip", page: currentSource?.page },
+          supporting_evidence: [{ document_id: currentSlip.document_id, document_type: "salary_slip", source_label: currentSlip.filename, page: currentSource?.page, field: "gross_monthly_income", value: currentSalary }],
+          relationships: [{ from: "User declaration", to: "Current salary slip", note: `You confirmed that the declared ₹${declaredIncome.toLocaleString("en-IN")} was your previous salary; the current salary slip shows ₹${currentSalary.toLocaleString("en-IN")}.` }],
+          status: "VERIFIED",
+          explanation: `You confirmed that your declared ₹${declaredIncome.toLocaleString("en-IN")} was your previous salary. The current salary slip shows a revised salary of ₹${currentSalary.toLocaleString("en-IN")}.`,
+          unresolved_items: [],
+          provenance
+        }
+      };
+    }
+  }
   if (!salaryRevisionDocs.length || !currentSlip) {
     return { status: "PROVIDED", issues: [], provenance: [] };
   }
@@ -378,7 +404,8 @@ function evaluateMappedField(
 export function evaluatePreparation(
   profile: CanonicalProfile,
   config: InstitutionConfig,
-  documents: ExtractedDocument[]
+  documents: ExtractedDocument[],
+  reconciliationContext?: ReconciliationContext
 ): VerificationResult {
   const checks: VerificationResult["checks"] = [];
   const issues: VerificationIssue[] = [];
@@ -386,7 +413,7 @@ export function evaluatePreparation(
   const nextActions: string[] = [];
 
   let reconciliation: Reconciliation | undefined;
-  const salaryRevisionResult = evaluateSalaryRevision(profile, documents);
+  const salaryRevisionResult = evaluateSalaryRevision(profile, documents, reconciliationContext);
   const grossNetResult = evaluateGrossVsNetReconciliation(profile, documents);
   const jobChangeResult = evaluateRecentJobChange(profile, documents);
 

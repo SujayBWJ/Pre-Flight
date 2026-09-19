@@ -108,6 +108,17 @@ describe("Pre-Flight API flow", () => {
     expect(explanation.body.explanation).toContain("Review the income definition");
   });
 
+  it("lists supported institutions and keeps the config-based discovery flow available", async () => {
+    const response = await request(app).get("/api/institutions");
+
+    expect(response.status).toBe(200);
+    expect(response.body.institutions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ institution: "hdfc_demo" }),
+      expect.objectContaining({ institution: "sbi_demo" }),
+      expect.objectContaining({ institution: "idfc_demo" })
+    ]));
+  });
+
   it("re-verifies a corrected declaration deterministically", async () => {
     const institution = await request(app).get("/api/institutions/sbi_demo");
     const response = await request(app).post("/api/application/reverify").send({

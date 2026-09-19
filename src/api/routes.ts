@@ -10,7 +10,7 @@ import {
   issueSchema,
   verificationInputSchema
 } from "../domain/schemas.js";
-import { getInstitutionConfig } from "../institutions/configLoader.js";
+import { getInstitutionConfig, listInstitutionConfigs } from "../institutions/configLoader.js";
 import { evaluatePreparation } from "../verification/verificationEngine.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -62,7 +62,7 @@ router.post("/documents/extract", upload.single("file"), async (request, respons
 router.post("/journey/evaluate", (request, response) => {
   const parsed = verificationInputSchema.safeParse(request.body);
   if (!parsed.success) return response.status(400).json(validationError("canonical_profile, institution_config, and documents are required and must be valid."));
-  return response.json({ success: true, ...evaluatePreparation(parsed.data.canonical_profile, parsed.data.institution_config, parsed.data.documents) });
+  return response.json({ success: true, ...evaluatePreparation(parsed.data.canonical_profile, parsed.data.institution_config, parsed.data.documents, parsed.data.reconciliation_context) });
 });
 
 router.post("/explanations", async (request, response) => {
@@ -74,7 +74,11 @@ router.post("/explanations", async (request, response) => {
 router.post("/application/reverify", (request, response) => {
   const parsed = verificationInputSchema.safeParse(request.body);
   if (!parsed.success) return response.status(400).json(validationError("Updated canonical_profile, institution_config, and documents are required and must be valid."));
-  return response.json({ success: true, ...evaluatePreparation(parsed.data.canonical_profile, parsed.data.institution_config, parsed.data.documents) });
+  return response.json({ success: true, ...evaluatePreparation(parsed.data.canonical_profile, parsed.data.institution_config, parsed.data.documents, parsed.data.reconciliation_context) });
+});
+
+router.get("/institutions", (_request, response) => {
+  return response.json({ success: true, institutions: listInstitutionConfigs() });
 });
 
 router.get("/institutions/:institution", (request, response) => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { GeminiIntentExtractor } from "../../src/ai/intentExtractor.js";
+import { SyntheticDocumentExtractor } from "../../src/ai/documentExtractor.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -35,5 +36,21 @@ describe("AI adapter boundaries", () => {
 
     expect(result.profile.income.gross_monthly).toBe(50000);
     expect(result.profile.employment.type).toBe("salaried");
+  });
+
+  it("keeps an old salary slip insufficient but exposes deterministic revision evidence for revision letters", async () => {
+    const extractor = new SyntheticDocumentExtractor();
+    const oldSlip = await extractor.extract({ filename: "PaySlip_Aarav_Sharma_September_2026.pdf", documentType: "salary_revision_letter", bytes: Buffer.from("synthetic"), mimeType: "application/pdf" });
+    const revisionLetter = await extractor.extract({ filename: "Salary_Revision_Letter_Aug_2026.pdf", documentType: "salary_revision_letter", bytes: Buffer.from("synthetic"), mimeType: "application/pdf" });
+
+    expect(oldSlip.document.fields.previous_salary).toBeUndefined();
+    expect(revisionLetter.document.fields).toMatchObject({ previous_salary: 40000, revised_salary: 60000, effective_date: "2026-08-01" });
+    expect(revisionLetter.document.sources).toHaveLength(3);
+  });
+
+  it("extracts the provided updated Aarav salary slip values in the demo fallback", async () => {
+    const result = await new SyntheticDocumentExtractor().extract({ filename: "PaySlip_Aarav_Sharma_September_2026.pdf", documentType: "salary_slip", bytes: Buffer.from("synthetic"), mimeType: "application/pdf" });
+
+    expect(result.document.fields).toMatchObject({ gross_monthly_income: 126000, net_monthly_income: 125000 });
   });
 });

@@ -10,12 +10,21 @@ export type CanonicalProfile = {
   purpose: string | null;
 };
 
+export type SupportingDocumentType =
+  | "salary_slip"
+  | "bank_statement"
+  | "salary_revision_letter"
+  | "hr_salary_certificate"
+  | "offer_letter"
+  | "appointment_letter"
+  | "employment_salary_certificate";
+
 export type InstitutionConfig = {
   institution: string;
   product: "personal_loan";
   label: string;
   requiredFields: string[];
-  requiredDocuments: ("salary_slip" | "bank_statement")[];
+  requiredDocuments: SupportingDocumentType[];
   fieldMappings: Record<string, string>;
   documentFieldMappings: Record<string, string>;
   terminology: Record<string, string>;
@@ -24,14 +33,22 @@ export type InstitutionConfig = {
 
 export type ExtractedDocument = {
   document_id: string;
-  document_type: "salary_slip" | "bank_statement";
+  document_type: SupportingDocumentType;
   filename: string;
   fields: {
-    gross_monthly_income: number | null;
-    net_monthly_income: number | null;
-    employer: string | null;
+    gross_monthly_income?: number | null;
+    net_monthly_income?: number | null;
+    employer?: string | null;
+    previous_salary?: number | null;
+    revised_salary?: number | null;
+    effective_date?: string | null;
+    previous_employer?: string | null;
+    new_employer?: string | null;
+    joining_date?: string | null;
+    compensation?: number | null;
+    salary_credit?: number | null;
   };
-  sources: { field: string; value: number; source_label: string; page: number }[];
+  sources: { field: string; value: number | string; source_label: string; page: number }[];
 };
 
 export type Check = { id: string; label: string; status: Status; detail: string };
@@ -44,6 +61,17 @@ export type Issue = {
   status: "NEEDS_CLARIFICATION";
   evidence: { document_id: string; source_label: string; page: number };
 };
+export type Reconciliation = {
+  explanation_type: "SALARY_REVISION" | "GROSS_NET_DIFFERENCE" | "RECENT_JOB_CHANGE";
+  user_declaration: { field: string; value: number | string; source: "user_input" };
+  primary_evidence?: { field: string; value: number | string; source_label: string; page?: number };
+  supporting_evidence: { document_id: string; document_type: SupportingDocumentType; source_label: string; page?: number; field: string; value: number | string }[];
+  relationships: { from: string; to: string; note: string }[];
+  status: Status;
+  explanation: string;
+  unresolved_items: string[];
+  provenance: { type: "user_input" | "document"; reference: string; source_label?: string; page?: number }[];
+};
 export type VerificationResult = {
   checks: Check[];
   overall_state: Status;
@@ -51,7 +79,9 @@ export type VerificationResult = {
   document_requirements: { document_type: "salary_slip" | "bank_statement"; label: string; provided: boolean; verification_optional: true; detail: string }[];
   next_actions: string[];
   provenance: { type: "user_input" | "document"; reference: string; source_label?: string; page?: number }[];
+  reconciliation?: Reconciliation;
 };
+export type ReconciliationContext = { explanation_type: "SALARY_REVISION" | "GROSS_NET_DIFFERENCE" | "RECENT_JOB_CHANGE"; previous_salary_confirmed?: boolean };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -71,13 +101,18 @@ export async function getInstitution() {
   return response.institution_config;
 }
 
-export async function evaluate(profile: CanonicalProfile, institution: InstitutionConfig, documents: ExtractedDocument[]) {
+export async function getInstitutions() {
+  const response = await request<{ success: true; institutions: InstitutionConfig[] }>("/api/institutions");
+  return response.institutions;
+}
+
+export async function evaluate(profile: CanonicalProfile, institution: InstitutionConfig, documents: ExtractedDocument[], reconciliationContext?: ReconciliationContext) {
   return request<{ success: true } & VerificationResult>("/api/journey/evaluate", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ canonical_profile: profile, institution_config: institution, documents })
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ canonical_profile: profile, institution_config: institution, documents, reconciliation_context: reconciliationContext })
   });
 }
 
-export async function extractDocument(file: File, documentType: "salary_slip" | "bank_statement") {
+export async function extractDocument(file: File, documentType: SupportingDocumentType) {
   const body = new FormData();
   body.append("file", file);
   body.append("document_type", documentType);
@@ -90,8 +125,8 @@ export async function explainIssue(issue: Issue) {
   });
 }
 
-export async function reverify(profile: CanonicalProfile, institution: InstitutionConfig, documents: ExtractedDocument[]) {
+export async function reverify(profile: CanonicalProfile, institution: InstitutionConfig, documents: ExtractedDocument[], reconciliationContext?: ReconciliationContext) {
   return request<{ success: true } & VerificationResult>("/api/application/reverify", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ canonical_profile: profile, institution_config: institution, documents })
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ canonical_profile: profile, institution_config: institution, documents, reconciliation_context: reconciliationContext })
   });
 }

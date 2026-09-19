@@ -95,7 +95,11 @@ export type InstitutionConfig = z.infer<typeof institutionConfigSchema>;
 export const verificationInputSchema = z.object({
   canonical_profile: canonicalProfileSchema,
   institution_config: institutionConfigSchema,
-  documents: z.array(extractedDocumentSchema)
+  documents: z.array(extractedDocumentSchema),
+  reconciliation_context: z.object({
+    explanation_type: reconciliationExplanationTypeSchema,
+    previous_salary_confirmed: z.boolean().optional()
+  }).optional()
 });
 
 export const documentRequirementSchema = z.object({

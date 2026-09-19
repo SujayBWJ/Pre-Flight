@@ -151,6 +151,32 @@ describe("deterministic preparation verification", () => {
     expect(result.issues[0]).toMatchObject({ canonical_field: "income.gross_monthly" });
   });
 
+  it("resolves a revised salary slip when the user confirms the declared amount was previous salary", () => {
+    const revisedProfile = canonicalProfileSchema.parse({
+      ...profile,
+      income: { gross_monthly: 80000, net_monthly: null }
+    });
+    const revisedSalarySlip = extractedDocumentSchema.parse({
+      document_id: "doc_salary_revised_slip",
+      document_type: "salary_slip",
+      filename: "updated_salary_slip.pdf",
+      fields: { gross_monthly_income: 126000, net_monthly_income: 125000, employer: "XYZ Pvt Ltd" },
+      sources: [
+        { field: "gross_monthly_income", value: 126000, source_label: "Gross Salary", page: 1 },
+        { field: "net_monthly_income", value: 125000, source_label: "Net Salary", page: 1 }
+      ]
+    });
+
+    const unresolved = evaluatePreparation(revisedProfile, getInstitutionConfig("hdfc_demo"), [revisedSalarySlip]);
+    const resolved = evaluatePreparation(revisedProfile, getInstitutionConfig("hdfc_demo"), [revisedSalarySlip], { explanation_type: "SALARY_REVISION", previous_salary_confirmed: true });
+
+    expect(unresolved.overall_state).toBe("NEEDS_CLARIFICATION");
+    expect(resolved.reconciliation?.status).toBe("VERIFIED");
+    expect(resolved.reconciliation?.user_declaration.value).toBe(80000);
+    expect(resolved.reconciliation?.primary_evidence?.value).toBe(126000);
+    expect(resolved.issues).toHaveLength(0);
+  });
+
   it("reconciles salary revision evidence when the previous salary, revised salary, and current slip match", () => {
     const updatedProfile = canonicalProfileSchema.parse({
       ...profile,
