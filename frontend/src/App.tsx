@@ -97,7 +97,7 @@ function App() {
         window.setTimeout(() => setReconciliationNotice(false), 1100);
       }
       return true;
-    } catch { setError("Couldn't upload the supporting document. Please choose another document."); return false; }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Couldn't upload the supporting document. Please choose another document."); return false; }
     finally { setLoading(null); }
   }
 

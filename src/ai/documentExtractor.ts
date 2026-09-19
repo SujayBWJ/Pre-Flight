@@ -1,16 +1,48 @@
 import { getGeminiApiKey } from "../config/env.js";
 import { extractedDocumentSchema, type ExtractedDocument, type SupportingDocumentType } from "../domain/schemas.js";
+import { PDFParse } from "pdf-parse";
 import { z } from "zod";
 
 export interface DocumentExtractor {
   extract(input: { filename: string; documentType: SupportingDocumentType; bytes: Buffer; mimeType: string }): Promise<{ document: ExtractedDocument; source: "live_ai" | "deterministic_demo_fallback" }>;
 }
 
+function findSalaryValue(text: string, labels: string[]) {
+  const labelPattern = labels.join("|");
+  const amountPattern = "(?:₹|rs\\.?|inr)?\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)";
+  const match = text.match(new RegExp(`(?:${labelPattern})[^\\d]{0,80}${amountPattern}`, "i"));
+  if (!match?.[1]) return null;
+  const value = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(value) ? value : null;
+}
+
+async function extractSalarySlipFromPdf(input: { filename: string; bytes: Buffer }) {
+  const parser = new PDFParse({ data: input.bytes });
+  try {
+    const result = await parser.getText();
+    const gross = findSalaryValue(result.text, ["gross salary", "gross monthly", "gross pay", "total earnings"]);
+    const net = findSalaryValue(result.text, ["net salary", "net pay", "take home", "take-home"]);
+    const employerMatch = result.text.match(/(?:employer|company|organization)\\s*[:\\-]?\\s*([^\\n]+)/i);
+    const sources = [
+      ...(gross === null ? [] : [{ field: "gross_monthly_income", value: gross, source_label: "Gross Salary", page: 1 }]),
+      ...(net === null ? [] : [{ field: "net_monthly_income", value: net, source_label: "Net Salary", page: 1 }])
+    ];
+    return {
+      fields: { gross_monthly_income: gross, net_monthly_income: net, employer: employerMatch?.[1]?.trim() || null },
+      sources
+    };
+  } finally {
+    await parser.destroy();
+  }
+}
+
 export class SyntheticDocumentExtractor implements DocumentExtractor {
   async extract(input: { filename: string; documentType: SupportingDocumentType; bytes: Buffer; mimeType: string }) {
-    void input.bytes;
     const isDemoSalarySlip = input.documentType === "salary_slip" && /Salary_Slip_August|Aarav_Sharma/i.test(input.filename);
     const isUpdatedAaravSlip = input.documentType === "salary_slip" && /Aarav_Sharma/i.test(input.filename);
+    const parsedSalarySlip = input.documentType === "salary_slip" && !isDemoSalarySlip
+      ? await extractSalarySlipFromPdf(input).catch(() => ({ fields: { gross_monthly_income: null, net_monthly_income: null, employer: null }, sources: [] }))
+      : null;
     const isRevisionEvidence = (input.documentType === "salary_revision_letter" || input.documentType === "hr_salary_certificate") && /revision|certificate|increment/i.test(input.filename);
     const revisionFields = isRevisionEvidence
       ? { gross_monthly_income: null, net_monthly_income: null, employer: "XYZ Pvt Ltd", previous_salary: 40000, revised_salary: 60000, effective_date: "2026-08-01" }
@@ -27,13 +59,13 @@ export class SyntheticDocumentExtractor implements DocumentExtractor {
       document_type: input.documentType,
       filename: input.filename,
       fields: input.documentType === "salary_slip"
-        ? isDemoSalarySlip ? isUpdatedAaravSlip ? { gross_monthly_income: 126000, net_monthly_income: 125000, employer: "Orbit Technologies Pvt Ltd" } : { gross_monthly_income: 60000, net_monthly_income: 48000, employer: "XYZ Pvt Ltd" } : { gross_monthly_income: null, net_monthly_income: null, employer: null }
+        ? isDemoSalarySlip ? isUpdatedAaravSlip ? { gross_monthly_income: 126000, net_monthly_income: 125000, employer: "Orbit Technologies Pvt Ltd" } : { gross_monthly_income: 60000, net_monthly_income: 48000, employer: "XYZ Pvt Ltd" } : parsedSalarySlip?.fields
         : revisionFields,
       sources: input.documentType === "salary_slip"
         ? isDemoSalarySlip ? [
           { field: "gross_monthly_income", value: isUpdatedAaravSlip ? 126000 : 60000, source_label: "Gross Salary", page: 1 },
           { field: "net_monthly_income", value: isUpdatedAaravSlip ? 125000 : 48000, source_label: "Net Salary", page: 1 }
-        ] : []
+        ] : parsedSalarySlip?.sources
         : revisionSources
     });
     return { document, source: "deterministic_demo_fallback" as const };
