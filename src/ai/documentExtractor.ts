@@ -9,6 +9,7 @@ export interface DocumentExtractor {
 export class SyntheticDocumentExtractor implements DocumentExtractor {
   async extract(input: { filename: string; documentType: SupportingDocumentType; bytes: Buffer; mimeType: string }) {
     void input.bytes;
+    const isDemoSalarySlip = input.documentType === "salary_slip" && /Salary_Slip_August|Aarav_Sharma/i.test(input.filename);
     const isUpdatedAaravSlip = input.documentType === "salary_slip" && /Aarav_Sharma/i.test(input.filename);
     const isRevisionEvidence = (input.documentType === "salary_revision_letter" || input.documentType === "hr_salary_certificate") && /revision|certificate|increment/i.test(input.filename);
     const revisionFields = isRevisionEvidence
@@ -26,13 +27,13 @@ export class SyntheticDocumentExtractor implements DocumentExtractor {
       document_type: input.documentType,
       filename: input.filename,
       fields: input.documentType === "salary_slip"
-        ? isUpdatedAaravSlip ? { gross_monthly_income: 126000, net_monthly_income: 125000, employer: "Orbit Technologies Pvt Ltd" } : { gross_monthly_income: 60000, net_monthly_income: 48000, employer: "XYZ Pvt Ltd" }
+        ? isDemoSalarySlip ? isUpdatedAaravSlip ? { gross_monthly_income: 126000, net_monthly_income: 125000, employer: "Orbit Technologies Pvt Ltd" } : { gross_monthly_income: 60000, net_monthly_income: 48000, employer: "XYZ Pvt Ltd" } : { gross_monthly_income: null, net_monthly_income: null, employer: null }
         : revisionFields,
       sources: input.documentType === "salary_slip"
-        ? [
+        ? isDemoSalarySlip ? [
           { field: "gross_monthly_income", value: isUpdatedAaravSlip ? 126000 : 60000, source_label: "Gross Salary", page: 1 },
           { field: "net_monthly_income", value: isUpdatedAaravSlip ? 125000 : 48000, source_label: "Net Salary", page: 1 }
-        ]
+        ] : []
         : revisionSources
     });
     return { document, source: "deterministic_demo_fallback" as const };
@@ -77,4 +78,12 @@ export class GeminiDocumentExtractor implements DocumentExtractor {
 export function createDocumentExtractor(): DocumentExtractor {
   const apiKey = getGeminiApiKey();
   return apiKey ? new GeminiDocumentExtractor(apiKey) : new SyntheticDocumentExtractor();
+}
+
+export function hasRequiredDocumentEvidence(document: ExtractedDocument) {
+  if (document.document_type === "salary_slip") {
+    return document.sources.some((source) => source.field === "gross_monthly_income" || source.field === "net_monthly_income")
+      && (document.fields.gross_monthly_income != null || document.fields.net_monthly_income != null);
+  }
+  return document.sources.length > 0;
 }

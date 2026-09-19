@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import { createIntentExtractor } from "../ai/intentExtractor.js";
-import { createDocumentExtractor, SyntheticDocumentExtractor } from "../ai/documentExtractor.js";
+import { createDocumentExtractor, hasRequiredDocumentEvidence, SyntheticDocumentExtractor } from "../ai/documentExtractor.js";
 import { StructuredIssueExplanationGenerator } from "../ai/explanationGenerator.js";
 import {
   canonicalProfileSchema,
@@ -43,15 +43,24 @@ router.post("/documents/extract", upload.single("file"), async (request, respons
     const parsedType = extractedDocumentSchema.shape.document_type.safeParse(documentType);
     if (!request.file) return response.status(400).json(validationError("file is required."));
     if (!parsedType.success) return response.status(400).json(validationError("document_type is invalid."));
+    if (parsedType.data === "salary_slip" && request.file.mimetype !== "application/pdf") {
+      return response.status(415).json({ success: false, error: { code: "UNSUPPORTED_DOCUMENT", message: "Salary slips must be uploaded as a PDF containing the required salary fields." } });
+    }
     if (!["application/pdf", "image/jpeg", "image/png"].includes(request.file.mimetype)) {
       return response.status(415).json({ success: false, error: { code: "UNSUPPORTED_DOCUMENT", message: "Only PDF, JPG, and PNG files are supported." } });
     }
     try {
       const result = await createDocumentExtractor().extract({ filename: request.file.originalname, documentType: parsedType.data, bytes: request.file.buffer, mimeType: request.file.mimetype });
+      if (!hasRequiredDocumentEvidence(result.document)) {
+        return response.status(422).json({ success: false, error: { code: "INVALID_DOCUMENT", message: "This file does not contain the required fields for the selected document type." } });
+      }
       return response.json({ success: true, document: result.document, extraction_source: result.source });
     } catch (error) {
       console.error("Document extraction failed; using deterministic fallback", error);
       const result = await new SyntheticDocumentExtractor().extract({ filename: request.file.originalname, documentType: parsedType.data, bytes: request.file.buffer, mimeType: request.file.mimetype });
+      if (!hasRequiredDocumentEvidence(result.document)) {
+        return response.status(422).json({ success: false, error: { code: "INVALID_DOCUMENT", message: "This file does not contain the required fields for the selected document type." } });
+      }
       return response.json({ success: true, document: result.document, extraction_source: result.source });
     }
   } catch (error) {
